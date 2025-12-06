@@ -1,0 +1,8 @@
+.git
+logs
+doc
+*.log
+start.sh
+stop.sh
+status.sh
+todos.json

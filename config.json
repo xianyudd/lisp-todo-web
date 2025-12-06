@@ -1,0 +1,7 @@
+{
+  "listen-port": 5000,
+  "data-file": "data/todos.json",
+  "max-data-bytes": 1048576,
+  "max-todo-count": 500,
+  "max-text-length": 200
+}
