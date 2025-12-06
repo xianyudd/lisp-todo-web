@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8">
+  <title>Lisp Web Todo</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+        "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background: #f5f5f7;
+    }
+
+    .app {
+      max-width: 640px;
+      margin: 40px auto;
+      background: #ffffff;
+      border-radius: 12px;
+      padding: 24px 28px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.08);
+      animation: card-fade-up 0.22s ease-out;
+    }
+
+    @keyframes card-fade-up {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    h1 {
+      margin: 0 0 16px;
+      font-size: 24px;
+      font-weight: 600;
+    }
+
+    .input-row {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .input-row input {
+      flex: 1;
+      padding: 8px 10px;
+      font-size: 14px;
+      border-radius: 6px;
+      border: 1px solid #d0d0d7;
+      outline: none;
+    }
+
+    .input-row input:focus {
+      border-color: #4f46e5;
+      box-shadow: 0 0 0 1px rgba(79, 70, 229, 0.15);
+    }
+
+    .input-row button {
+      padding: 8px 14px;
+      font-size: 14px;
+      border-radius: 6px;
+      border: none;
+      background: #4f46e5;
+      color: #fff;
+      cursor: pointer;
+      transition: background 0.18s ease, transform 0.12s ease,
+        box-shadow 0.18s ease;
+    }
+
+    .input-row button:hover:not(:disabled) {
+      background: #4338ca;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 10px rgba(79, 70, 229, 0.35);
+    }
+
+    .input-row button:disabled {
+      opacity: 0.6;
+      cursor: default;
+      box-shadow: none;
+      transform: none;
+    }
+
+    ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      max-height: 380px;
+      overflow-y: auto;
+    }
+
+    li {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 10px;
+      border-radius: 6px;
+      margin-bottom: 6px;
+      background: #f8f8ff;
+      font-size: 14px;
+
+      /* 基础状态：不透明、不偏移，只保留 hover 这些过渡 */
+      opacity: 1;
+      transform: translateY(0);
+      transition: background 0.18s ease, transform 0.18s ease,
+        box-shadow 0.18s ease;
+    }
+
+    /* 只给新进来的元素加 .enter 类时触发这段动画 */
+    li.enter {
+      opacity: 0;
+      transform: translateY(4px);
+      animation: todo-fade-in 0.18s ease-out forwards;
+    }
+
+    /* 删除时的缩小 + 淡出动画 */
+    li.removing {
+      pointer-events: none;
+      /* 避免删除过程中继续点 */
+      animation: todo-remove 10.8s ease-in forwards;
+    }
+
+    @keyframes todo-remove {
+      from {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+
+      to {
+        opacity: 0;
+        transform: translateY(-2px) scale(0.9);
+      }
+    }
+
+
+    li:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+    }
+
+    @keyframes todo-fade-in {
+      from {
+        opacity: 0;
+        transform: translateY(4px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    li.done {
+      background: #f3f4ff;
+    }
+
+    li span.text {
+      flex: 1;
+      margin-right: 10px;
+      word-break: break-all;
+      transition: color 0.18s ease, text-decoration-color 0.18s ease;
+    }
+
+    li.done span.text {
+      text-decoration: line-through;
+      text-decoration-color: #9ca3af;
+      color: #9ca3af;
+    }
+
+    li button {
+      border: none;
+      background: #ef4444;
+      color: #fff;
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.18s ease, transform 0.12s ease,
+        box-shadow 0.18s ease;
+    }
+
+    li button:hover {
+      background: #dc2626;
+      transform: translateY(-0.5px);
+      box-shadow: 0 2px 6px rgba(220, 38, 38, 0.4);
+    }
+
+    li input[type="checkbox"] {
+      margin-right: 8px;
+    }
+
+    .empty {
+      color: #999;
+      font-size: 13px;
+      padding: 10px 0;
+      text-align: center;
+    }
+
+    #summary {
+      color: #666;
+      font-size: 13px;
+      padding-top: 6px;
+      text-align: right;
+    }
+  </style>
+
+</head>
+
+<body>
+  <div class="app">
+    <h1>Lisp Web Todo</h1>
+    <div class="input-row">
+      <input id="new-text" placeholder="输入待办事项，然后回车或点『添加』">
+      <button id="add-btn">添加</button>
+    </div>
+    <ul id="list"></ul>
+    <div id="empty-tip" class="empty" style="display:none;">目前还没有任务，先添加一条吧～</div>
+    <div id="summary"></div>
+  </div>
+
+  <script>
+
+
+    // 如果浏览器支持 SSE，就从服务器订阅 todos 更新
+    let evtSource = null;
+    if ('EventSource' in window) {
+      evtSource = new EventSource('/api/todos/events');
+
+      // 服务器每次推送的是完整的 todos 数组 JSON
+      evtSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          renderList(data, { animate: false });
+        } catch (err) {
+          console.error('解析 SSE 数据失败:', err, event.data);
+        }
+      };
+
+      evtSource.onerror = (err) => {
+        console.error('SSE 连接出错:', err);
+        // 简单起见，先不做自动重连，浏览器会自己尝试重连一次
+      };
+    }
+
+
+
+    // GET /api/todos -> 获取当前所有 todo
+    async function fetchTodos() {
+      const res = await fetch('/api/todos');
+      if (!res.ok) {
+        console.error('加载列表失败');
+        return [];
+      }
+      const json = await res.json();
+      //  如果后端哪天返回了 null / 对象之类，直接当成空数组
+      return Array.isArray(json) ? json : [];
+    }
+
+
+    // 负责根据数据渲染整个列表和统计信息
+    function renderList(rawData, options = {}) {
+      const { animate = false } = options;
+
+      // 兜底：不管传进来是什么，只要不是数组，统统当成空数组
+      const data = Array.isArray(rawData) ? rawData : [];
+
+      const ul = document.getElementById('list');
+      const empty = document.getElementById('empty-tip');
+      const summary = document.getElementById('summary');
+
+      ul.innerHTML = '';
+
+      if (!data.length) {
+        empty.style.display = 'block';
+        summary.textContent = '';
+        return;
+      }
+      empty.style.display = 'none';
+
+      let doneCount = 0;
+
+      data.forEach(item => {
+        const li = document.createElement('li');
+        const isDone = !!item.done;
+        if (isDone) doneCount++;
+
+        if (isDone) li.classList.add('done');
+
+        // 是否需要进场动画
+        if (animate) {
+          li.classList.add('enter');
+          li.addEventListener(
+            'animationend',
+            () => {
+              li.classList.remove('enter');
+            },
+            { once: true }
+          );
+        }
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = isDone;
+        checkbox.addEventListener('change', async () => {
+          const res = await fetch('/api/todos?id=' + encodeURIComponent(item.id), {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ done: checkbox.checked })
+          });
+          if (!res.ok) {
+            console.error('更新失败');
+            checkbox.checked = !checkbox.checked;
+            return;
+          }
+          const newData = await res.json();
+          renderList(newData, { animate: false });
+        });
+
+        const span = document.createElement('span');
+        span.className = 'text';
+        span.textContent = item.text;
+
+        const del = document.createElement('button');
+        del.textContent = '删除';
+        del.addEventListener('click', async () => {
+          const res = await fetch('/api/todos?id=' + encodeURIComponent(item.id), {
+            method: 'DELETE'
+          });
+          if (!res.ok) {
+            console.error('删除失败');
+            return;
+          }
+          const newData = await res.json();
+
+          li.classList.add('removing');
+          li.addEventListener(
+            'animationend',
+            () => {
+              renderList(newData, { animate: false });
+            },
+            { once: true }
+          );
+        });
+
+        li.appendChild(checkbox);
+        li.appendChild(span);
+        li.appendChild(del);
+        ul.appendChild(li);
+      });
+
+      const total = data.length;
+      const pending = total - doneCount;
+      summary.textContent = `共 ${total} 条任务，未完成 ${pending} 条`;
+    }
+
+    // 首次加载时用：从后端拉一次列表，然后渲染
+    async function refreshList() {
+      const data = await fetchTodos();
+      renderList(data, { animate: true });
+    }
+
+
+    // 添加一条 todo：用 POST /api/todos 返回的列表直接渲染
+    async function addTodo() {
+      const input = document.getElementById('new-text');
+      const btn = document.getElementById('add-btn');
+      const text = input.value.trim();
+      if (!text) return;
+
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/todos', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text })
+        });
+        if (!res.ok) {
+          console.error('添加失败');
+          return;
+        }
+        const data = await res.json(); // 后端返回最新列表
+        input.value = '';
+        // ⭐ 新增时开一下动画，更有“新加了一条”的感觉
+        renderList(data, { animate: true });
+      } finally {
+        btn.disabled = false;
+        input.focus();
+      }
+    }
+
+    document.getElementById('add-btn').addEventListener('click', addTodo);
+    document.getElementById('new-text').addEventListener('keydown', e => {
+      if (e.key === 'Enter') addTodo();
+    });
+
+    // 初次加载
+    refreshList({ animate: true });
+    if ('EventSource' in window) {
+      const evtSource = new EventSource('/api/todos/events');
+
+      evtSource.onmessage = (event) => {
+        try {
+          // 有些心跳 / 异常情况下，可能是空字符串或 null，直接忽略
+          if (!event.data) return;
+
+          const parsed = JSON.parse(event.data);
+          const data = Array.isArray(parsed) ? parsed : [];
+
+          renderList(data, { animate: false });
+        } catch (err) {
+          console.error('解析 SSE 数据失败:', err, event.data);
+          // 解析失败就忽略这条消息，不往 renderList 传垃圾
+        }
+      };
+
+      evtSource.onerror = (err) => {
+        console.error('SSE 连接出错:', err);
+      };
+    }
+
+
+  </script>
+</body>
+
+</html>
