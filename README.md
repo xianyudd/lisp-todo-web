@@ -46,7 +46,6 @@ http://localhost:5000/
 ./start.sh   # 后台启动服务
 ./status.sh  # 查看当前运行状态
 ./stop.sh    # 停止服务
-./logs.sh    # (可选) 实时查看最新日志
 ```
 
 ## License
