@@ -19,7 +19,7 @@ YELLOW="\033[33m"
 RED="\033[31m"
 RESET="\033[0m"
 
-# 一个小 spinner，用来显示“程序还活着”
+# 小 spinner：表示进程还活着
 spinner_check() {
   local pid="$1"
   local frames='-\|/'
@@ -28,14 +28,15 @@ spinner_check() {
 
   while kill -0 "$pid" 2>/dev/null && [ "$max_ticks" -gt 0 ]; do
     local frame="${frames:i%${#frames}:1}"
-    printf "\r[%s] Lisp Todo Web server is running..." "$frame"
+    # 同一行刷新
+    printf "\r[%s] Lisp Todo Web server is starting..." "$frame"
     i=$((i + 1))
     max_ticks=$((max_ticks - 1))
     sleep 0.1
   done
 
-  # 清掉这一行，交给后面的 [OK]/[FAIL] 输出
-  printf "\r"
+  # 打一行空白把刚才那行覆盖掉，避免残留字符
+  printf "\r%-60s\r" ""
 }
 
 # 如果已经在运行，就不要重复启动
@@ -47,15 +48,16 @@ if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
   else
     echo "  暂无日志文件（logs/ 目录为空）"
   fi
+  echo "  URL: http://localhost:5000/"
   exit 0
 fi
 
 # 启动前先写一行标记到本次日志
 echo "=== START $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$RUN_LOG"
 
-# 第一行：简单提示一下
+# 提示：开始启动（这里直接换行，不让人误会要输入）
 echo "[..] Starting Lisp Todo Web server..."
-echo "  日志文件: $RUN_LOG"
+echo "  Log file: $RUN_LOG"
 
 # 后台启动 SBCL，日志全部写入本次 RUN_LOG
 nohup sbcl --noinform --disable-debugger \
@@ -68,18 +70,18 @@ nohup sbcl --noinform --disable-debugger \
 PID=$!
 echo "$PID" > "$PID_FILE"
 
-# 短暂动画：3 秒内持续检查“进程还活着”
+# 短暂 spinner 动画，表示“进程没秒挂”
 spinner_check "$PID"
 
-# 动画结束之后，再最终判断一次
+# 动画结束后，给出最终状态
 if kill -0 "$PID" 2>/dev/null; then
   echo -e "${GREEN}[OK]${RESET} Lisp Todo Web server started."
   echo "  PID: $PID"
   echo "  Log: $RUN_LOG"
+  echo "  URL: http://localhost:5000/"
 else
   echo -e "${RED}[FAIL]${RESET} Lisp Todo Web server exited during startup."
   echo "  请查看日志: $RUN_LOG"
-  # 清理掉无效的 pid 文件
   rm -f "$PID_FILE" || true
   exit 1
 fi
