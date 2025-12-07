@@ -15,4 +15,4 @@ todo-web.pid
 .idea/
 .vscode/
 # 存储文件
-todos.json
+data/

@@ -29,6 +29,7 @@
     (let ((content (make-string (file-length in))))
       (read-sequence content in)
       content)))
+
 (defun config-value (key-string &optional default)
   "从 *config* 里用字符串 key-string 取值，兼容字符串 / 符号 / keyword 形式的 key。"
   (labels ((key-match-p (k)
@@ -70,26 +71,52 @@
 
 ;;; ====== 内存里的 Todo 数据结构 ======
 
-(defvar *todos* (make-hash-table))  ; id -> plist
-(defvar *next-id* 0)
+(defstruct todo-item
+  id
+  text
+  (done nil)
+  priority      ; 预留优先级
+  due-time      ; 预留截止时间
+  order         ; 列表内排序
+  created-at
+  updated-at)
 
-(defun make-todo (text &key (done nil) id)
-  "创建一个 todo 对象（plist）。如果 id 未提供则自增一个新 id。"
-  (let ((real-id (or id (incf *next-id*))))
-    (list :id   real-id
-          :text text
-          :done done)))
+(defvar *todos* '()
+  "当前所有 todo-item 的有序列表，列表顺序就是前端展示顺序。")
+
+(defvar *next-id* 0
+  "用于生成自增 ID 的计数器。")
+
+(defun make-todo (text &key (done nil) id priority due-time order created-at updated-at)
+  "创建一个 todo 对象（todo-item 结构体）。如果 id 未提供则自增一个新 id。"
+  (let* ((real-id    (or id (incf *next-id*)))
+         (now        (or updated-at (get-universal-time)))
+         (created-at (or created-at now))
+         (order      (or order real-id)))
+    (make-todo-item
+     :id         real-id
+     :text       text
+     :done       done
+     :priority   priority
+     :due-time   due-time
+     :order      order
+     :created-at created-at
+     :updated-at now)))
 
 (defun todo-list ()
-  "以 list 返回当前所有 todo（plist）。"
-  (loop for v being the hash-values of *todos*
-        collect v))
+  "以 list 返回当前所有 todo-item，保持原有顺序。"
+  *todos*)
 
 (defun todo->json-object (todo)
-  "把 plist 形式的 TODO 转成适合 cl-json 的对象 alist。"
-  (list (cons "id"   (getf todo :id))
-        (cons "text" (getf todo :text))
-        (cons "done" (and (getf todo :done) t))))
+  "把 todo-item 结构体转成适合 cl-json 的对象 alist。"
+  (list (cons "id"         (todo-item-id todo))
+        (cons "text"       (todo-item-text todo))
+        (cons "done"       (and (todo-item-done todo) t))
+        (cons "priority"   (todo-item-priority todo))
+        (cons "due_time"   (todo-item-due-time todo))
+        (cons "order"      (todo-item-order todo))
+        (cons "created_at" (todo-item-created-at todo))
+        (cons "updated_at" (todo-item-updated-at todo))))
 
 (defun todos-data ()
   "返回 todo 列表对应的 Lisp 数据结构（给 JSON 编码用）。"
@@ -142,19 +169,39 @@
             (handler-case
                 (let ((data (cl-json:decode-json-from-string content)))
                   ;; data 形如：(((\"id\" . 1) (\"text\" . \"xxx\") (\"done\" . T)) ...)
-                  (clrhash *todos*)
+                  (setf *todos* '())
                   (setf *next-id* 0)
-                  (dolist (obj data)
-                    (let* ((id   (or (cdr (assoc :id   obj))
-                                     (cdr (assoc "id"   obj :test #'string=))))
-                           (text (or (cdr (assoc :text obj))
-                                     (cdr (assoc "text" obj :test #'string=))))
-                           (done (or (cdr (assoc :done obj))
-                                     (cdr (assoc "done" obj :test #'string=)))))
-                      (when (and id text)
-                        (let ((todo (make-todo text :id id :done (and done t))))
-                          (setf (gethash id *todos*) todo)
-                          (setf *next-id* (max *next-id* id)))))))
+                  (let ((acc '()))
+                    (dolist (obj data)
+                      (let* ((id         (or (cdr (assoc :id   obj))
+                                             (cdr (assoc "id"   obj :test #'string=))))
+                             (text       (or (cdr (assoc :text obj))
+                                             (cdr (assoc "text" obj :test #'string=))))
+                             (done       (or (cdr (assoc :done obj))
+                                             (cdr (assoc "done" obj :test #'string=))))
+                             (priority   (or (cdr (assoc :priority obj))
+                                             (cdr (assoc "priority" obj :test #'string=))))
+                             (due-time   (or (cdr (assoc :due-time obj))
+                                             (cdr (assoc "due_time" obj :test #'string=))))
+                             (order      (or (cdr (assoc :order obj))
+                                             (cdr (assoc "order" obj :test #'string=))))
+                             (created-at (or (cdr (assoc :created-at obj))
+                                             (cdr (assoc "created_at" obj :test #'string=))))
+                             (updated-at (or (cdr (assoc :updated-at obj))
+                                             (cdr (assoc "updated_at" obj :test #'string=)))))
+                        (when (and id text)
+                          (let ((todo (make-todo text
+                                                 :id id
+                                                 :done (and done t)
+                                                 :priority priority
+                                                 :due-time due-time
+                                                 :order order
+                                                 :created-at created-at
+                                                 :updated-at updated-at)))
+                            (push todo acc)
+                            (setf *next-id* (max *next-id* id))))))
+                    ;; acc 是逆序累积的，这里 nreverse 回到原来保存时的顺序
+                    (setf *todos* (nreverse acc))))
               (error (e)
                 (format *error-output*
                         "Warning: failed to parse ~A as JSON: ~A~%"
@@ -189,6 +236,7 @@
                          ;; 写失败说明连接断了，返回 NIL 让上面的 remove-if 去掉
                          nil)))
                    *sse-clients*)))))
+
 (defun todos-events-handler ()
   "SSE 事件流：GET /api/todos/events。"
   ;; 设置 SSE 所需的响应头
@@ -220,7 +268,6 @@
 
 
 
-
 ;;; ====== REST 风格的 /api/todos 处理 ======
 
 (defun parse-id-parameter ()
@@ -231,7 +278,9 @@
            (parse-integer id-str :junk-allowed t)))))
 
 (defun find-todo (id)
-  (and id (gethash id *todos*)))
+  "在 *todos* 中按 id 查找 todo-item。"
+  (and id
+       (find id *todos* :key #'todo-item-id)))
 
 (defun handle-list-todos ()
   "GET /api/todos -> 返回全部 todo 列表。"
@@ -241,7 +290,7 @@
   "是否超过最大 todo 条数。"
   (let ((max-count (cfg "max-todo-count" 500)))
     (and max-count
-         (>= (hash-table-count *todos*) max-count))))
+         (>= (length *todos*) max-count))))
 
 (defun data-file-too-large-p ()
   "数据文件是否超过最大允许大小。"
@@ -254,8 +303,6 @@
   "文本是否超过最大长度。"
   (let ((max-len (cfg "max-text-length" 200)))
     (and max-len (> (length text) max-len))))
-
-
 
 (defun handle-create-todo ()
   "POST /api/todos -> 新增一条 todo，返回最新列表。body 支持 JSON 或 form。"
@@ -284,13 +331,21 @@
 
       ;; 5. 正常添加
       (t
-       (let ((todo (make-todo text)))
-         (setf (gethash (getf todo :id) *todos*) todo))
+       (let* ((priority (and body
+                             (or (cdr (assoc :priority body))
+                                 (cdr (assoc "priority" body :test #'string=)))))
+              (due-time (and body
+                             (or (cdr (assoc :due-time body))
+                                 (cdr (assoc "due_time" body :test #'string=)))))
+              (todo (make-todo text
+                               :priority priority
+                               :due-time due-time)))
+         ;; 新增的 todo 插入到列表头部（前端最新在最上）
+         (setf *todos* (cons todo *todos*)))
        (save-todos-to-file)
        (broadcast-todos)
        ;; 返回完整列表，方便前端直接 renderList
        (respond-json (todos-data) 201)))))
-
 
 (defun handle-update-todo ()
   "PATCH /api/todos?id=... -> 更新 todo。当前只用来修改 done 字段。"
@@ -308,10 +363,13 @@
          (let* ((raw-done (or (cdr (assoc :done body))
                               (cdr (assoc "done" body :test #'string=))))
                 (new-done (and raw-done t)))
-           (setf (getf todo :done) new-done)))
+           (setf (todo-item-done todo) new-done)))
         ;; 否则，退化成“切换完成状态”的行为（向后兼容）
         (t
-         (setf (getf todo :done) (not (getf todo :done))))))
+         (setf (todo-item-done todo)
+               (not (todo-item-done todo)))))
+      ;; 更新修改时间
+      (setf (todo-item-updated-at todo) (get-universal-time)))
     (save-todos-to-file)
     (broadcast-todos)
     ;; 返回完整列表
@@ -324,7 +382,9 @@
     (unless todo
       (return-from handle-delete-todo
         (respond-json '(("error" . "not-found")) 404)))
-    (remhash id *todos*)
+    ;; 从有序列表里删除对应 id 的 todo
+    (setf *todos*
+          (remove id *todos* :key #'todo-item-id))
     (save-todos-to-file)
     (broadcast-todos)
     ;; 这里也选择返回完整列表，方便前端直接渲染
@@ -338,6 +398,52 @@
     (:PATCH  (handle-update-todo))
     (:DELETE (handle-delete-todo))
     (t       (respond-json '(("error" . "method-not-allowed")) 405))))
+
+;;; ====== 排序接口 /api/todos/reorder ======
+
+(defun handle-reorder-todos ()
+  "POST /api/todos/reorder -> 根据前端传来的 ids 顺序重排 *todos*，返回最新列表。"
+  (let* ((body (read-json-body))
+         (ids  (and body
+                    (or (cdr (assoc :ids body))
+                        (cdr (assoc "ids" body :test #'string=))))))
+    (cond
+      ((null ids)
+       (respond-json '(("error" . "ids-required")) 400))
+      ((not (listp ids))
+       (respond-json '(("error" . "ids-must-be-list")) 400))
+      (t
+       (let ((id->todo (make-hash-table))
+             (new-list '()))
+         ;; 建立临时 id -> todo 表
+         (dolist (todo *todos*)
+           (setf (gethash (todo-item-id todo) id->todo) todo))
+         ;; 按 ids 顺序重建列表
+         (dolist (id ids)
+           (let ((todo (gethash id id->todo)))
+             (when todo
+               (push todo new-list)
+               (remhash id id->todo))))
+         ;; 把 ids 中没出现的 todo 追加到末尾（容错）
+         (maphash (lambda (id todo)
+                    (declare (ignore id))
+                    (push todo new-list))
+                  id->todo)
+         (setf *todos* (nreverse new-list))
+         ;; 顺便更新一下 order 字段（可选，不更新前端也能正常工作）
+         (let ((i 0))
+           (dolist (todo *todos*)
+             (incf i)
+             (setf (todo-item-order todo) i)))
+         (save-todos-to-file)
+         (broadcast-todos)
+         (respond-json (todos-data) 200))))))
+
+(defun todos-reorder-handler ()
+  "统一处理 /api/todos/reorder。当前只支持 POST。"
+  (case (hunchentoot:request-method*)
+    (:POST (handle-reorder-todos))
+    (t     (respond-json '(("error" . "method-not-allowed")) 405))))
 
 ;;; ====== 首页：读静态 HTML 返回 ======
 
@@ -362,9 +468,10 @@
         (list
          ;; SSE 事件流
          (hunchentoot:create-prefix-dispatcher "/api/todos/events" #'todos-events-handler)
+         ;; 排序接口
+         (hunchentoot:create-prefix-dispatcher "/api/todos/reorder" #'todos-reorder-handler)
          ;; RESTful API
          (hunchentoot:create-prefix-dispatcher "/api/todos" #'todos-handler)
-         
          ;; 静态首页
          (hunchentoot:create-prefix-dispatcher "/"          #'index-handler))))
 
@@ -387,7 +494,7 @@
   (load-config)
   ;; 2. 再从数据文件恢复 todos（如果有）
   (load-todos-from-file)
-    (format t "Config data-file = ~A~%" *data-file*)
+  (format t "Config data-file = ~A~%" *data-file*)
   ;; 3. 配置路由
   (setup-dispatch-table)
   ;; 4. 计算实际端口
@@ -399,9 +506,6 @@
                           :port real-port)))
     (format t "Todo Web server started on http://localhost:~A/~%" real-port)
     *server*))
-
-
-
 
 (defun stop-server ()
   "停止 HTTP 服务器。"
